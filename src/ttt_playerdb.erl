@@ -24,7 +24,7 @@ delete(Db) ->
 add(Db, Player=#player{name=Name, pid=Pid, ref=Mon}) when is_record(Player, player) ->
     ets:insert(Db#playerdb.name2player, Player),
     ets:insert(Db#playerdb.ref2name, {Mon, Name}),
-    ets:insert(Db#playerdb.ref2name, {Pid, Name}).
+    ets:insert(Db#playerdb.pid2name, {Pid, Name}).
 
 
 players(Db) ->
