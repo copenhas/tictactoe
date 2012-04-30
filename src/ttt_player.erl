@@ -1,10 +1,17 @@
--module(ttt_server).
+-module(ttt_player).
 
--behaviour(gen_server).
+-include("ttt_player.hrl").
 
-%% API
--export([start_link/0]).
--export([connect/2, players/0, challenge/1, accept/1, decline/1]).
+%% custom behavior API
+-export([behaviour_info/1]).
+
+%% behavior common API
+-export([create/2,
+         recieve_challenge/2, issue_challenge/2,
+         get_players/1]).
+
+
+-behavior(gen_server).
 
 %% gen_server callbacks
 -export([init/1,
@@ -14,40 +21,37 @@
          terminate/2,
          code_change/3]).
 
--include("ttt_playerdb.hrl").
 
--define(SERVER, ?MODULE).
+%%%===================================================================
+%%% Behavior Exports
+%%%===================================================================
+behaviour_info(callbacks) ->
+    [{init, 0},
+     {challenge_recieved, 2},
+     {challenge_issued, 2},
+     {challenge_failed, 3},
+     {challenge_accepted, 3}];
 
--record(state, {players}).
+behaviour_info(_)->
+    undefined.
+
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Starts the server
-%%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
-%% @end
-%%--------------------------------------------------------------------
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+create(Name, Callback) ->
+    {ok, Pid} = gen_server:start(?MODULE, [Name, Callback], []),
+    Pid.
 
-connect(Name, Pid) when is_list(Name); is_pid(Pid) ->
-    gen_server:call(?SERVER, {connect, Name, Pid}).
+recieve_challenge(Pid, Challenger) when is_pid(Pid); is_list(Challenger) ->
+    gen_server:cast(Pid, {challenge, Challenger}).
 
-players() ->
-    gen_server:call(?SERVER, players).
+issue_challenge(Pid, Name) when is_pid(Pid) ->
+    gen_server:cast(Pid, {issue_challenge, Name}).
 
-challenge(Name) when is_list(Name) ->
-    gen_server:call(?SERVER, {challenge, Name}).
-
-accept(Name) when is_list(Name) ->
-    ok.
-
-decline(Name) when is_list(Name) ->
-    ok.
+get_players(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, players).
 
 
 %%%===================================================================
@@ -65,10 +69,13 @@ decline(Name) when is_list(Name) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-        {ok, #state{
-                players=ttt_playerdb:new()
-            }}.
+init([Name, Callback]) ->
+    State = Callback:init(),
+    case ttt_server:connect(Name, self()) of
+        {error, Reason} -> throw({error, Reason});
+        connected -> ok
+    end,
+    {ok, #info{name=Name, callback=Callback, status=connected, state=State}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -84,35 +91,8 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({connect, Name, Pid}, _From, State) ->
-    case ttt_playerdb:get_by_name(State#state.players, Name) of
-        #player{name=Name, pid=Pid} -> {reply, connected, State};
-        #player{name=Name} ->
-            {reply, {error, name_in_use}, State};
-        undefined ->
-            Mon = monitor(process, Pid),
-            ttt_playerdb:add(State#state.players, 
-                #player{name=Name, pid=Pid, ref=Mon}),
-            {reply, connected, State}
-    end;
-
-handle_call(players, {Pid, _Ref}, State) ->
-    Reply = run_if_connected(State, Pid, fun (_Player) ->
-        Players = ttt_playerdb:players(State#state.players),
-        [{N, S} || #player{name=N, status=S} <- Players]
-    end),
-    {reply, Reply, State};
-
-handle_call({challenge, Name}, {Pid, _Ref}, State) ->
-    Reply = run_if_connected(State, Pid, fun (Player) ->
-        case ttt_playerdb:get_by_name(State#state.players, Name) of
-            undefined -> {error, not_found};
-            #player{pid=Challee} ->
-                ttt_player:recieve_challenge(Challee, Player#player.name),
-                issued
-        end
-    end),
-    {reply, Reply, State}.
+handle_call(players, _From, Info) ->
+    {reply, ttt_server:players(), Info}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -124,8 +104,24 @@ handle_call({challenge, Name}, {Pid, _Ref}, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(_Request, State) ->
-        {noreply, State}.
+handle_cast({challenge, Player}, Info) ->
+    Challenges = Info#info.challenges_awaiting,
+    Callback = Info#info.callback,
+    NewInfo = Info#info{challenges_awaiting = [Player | Challenges]},
+    Next = Callback:challenge_recieved(Player, NewInfo),
+    {noreply, Next};
+    
+handle_cast({issue_challenge, Name}, Info) ->
+    Challenges = Info#info.challenges_pending,
+    Callback = Info#info.callback,
+    Next = case ttt_server:challenge(Name) of
+        issued ->
+            NewInfo = Info#info{challenges_pending = [Name | Challenges]},
+            Callback:challenge_issued(Name, NewInfo);
+        {error, Reason} ->
+            Callback:challenge_failed(Name, Reason, Info)
+    end,
+    {noreply, Next}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -137,8 +133,7 @@ handle_cast(_Request, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({'DOWN', Ref, process, _Pid, _Reason}, State) ->
-    ttt_playerdb:remove_by_ref(State#state.players, Ref),
+handle_info(none, State) ->
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -152,8 +147,7 @@ handle_info({'DOWN', Ref, process, _Pid, _Reason}, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, State) ->
-        ttt_playerdb:delete(State#state.players),
+terminate(_Reason, _State) ->
         ok.
 
 %%--------------------------------------------------------------------
@@ -171,8 +165,3 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-run_if_connected(State, Pid, Cmd) ->
-    case ttt_playerdb:get_by_pid(State#state.players, Pid) of
-        undefined -> {error, not_connected};
-        Connected -> Cmd(Connected)
-    end.
