@@ -3,12 +3,12 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/0]).
+-export([start_link/2]).
+-export([get_board/1, move/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
-         state_name/2,
-         state_name/3,
+         player_turn/3,
          handle_event/3,
          handle_sync_event/4,
          handle_info/3,
@@ -17,11 +17,21 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {}).
+-record(state, {
+        players=[],
+        current=x,
+        board
+    }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+get_board(Game) when is_pid(Game) ->
+    gen_fsm:sync_send_all_state_event(Game, get_board).
+
+move(Game, Coords) when is_pid(Game) ->
+    gen_fsm:sync_send_event(Game, {place, Coords}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -32,8 +42,8 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-        gen_fsm:start_link(?MODULE, [], []).
+start_link(Player1, Player2) ->
+    gen_fsm:start_link(?SERVER, [Player1, Player2], []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -52,8 +62,11 @@ start_link() ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-        {ok, state_name, #state{}}.
+init([Player1, Player2]) ->
+    {ok, x_player_turn, #state{
+            players=[{x, Player1}, {o, Player2}],
+            board=ttt_board:new()
+        }}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -70,8 +83,6 @@ init([]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-state_name(_Event, State) ->
-        {next_state, state_name, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -91,9 +102,20 @@ state_name(_Event, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-state_name(_Event, _From, State) ->
-        Reply = ok,
-        {reply, Reply, state_name, State}.
+player_turn({place, Coords}, {Pid, _Ref}, State) ->
+    case pipe([Pid, State, Coords], [check_player, update_board, check_victory]) of
+        {error, Reason, _Func} -> 
+            {reply, {error, Reason}, player_turn, State};
+        {player_turn, UpdatedState} ->
+            CurrentPlayer = current_player(UpdatedState),
+            ttt_player:turn(CurrentPlayer, self()),
+            {reply, {ok, UpdatedState#state.board}, player_turn, UpdatedState};
+        {Winner, UpdatedState} ->
+            ttt_player:won(current_player(UpdatedState), self()),
+            ttt_player:lost(other_player(UpdatedState), self()),
+            {stop, Winner, {ok, UpdatedState#state.board}, UpdatedState}
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -108,8 +130,8 @@ state_name(_Event, _From, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_event(_Event, StateName, State) ->
-        {next_state, StateName, State}.
+handle_event(none, StateName, State) ->
+    {next_state, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -127,9 +149,8 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_sync_event(_Event, _From, StateName, State) ->
-        Reply = ok,
-        {reply, Reply, StateName, State}.
+handle_sync_event(get_board, _From, StateName, State) ->
+    {reply, State#state.board, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -144,8 +165,8 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(_Info, StateName, State) ->
-        {next_state, StateName, State}.
+handle_info(none, StateName, State) ->
+    {next_state, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -159,7 +180,7 @@ handle_info(_Info, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _StateName, _State) ->
-        ok.
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -171,9 +192,66 @@ terminate(_Reason, _StateName, _State) ->
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, StateName, State, _Extra) ->
-        {ok, StateName, State}.
+    {ok, StateName, State}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
+pipe(Args, []) -> Args;
+
+pipe(Args, [Func, Tail]) when is_list(Args) ->
+    case apply(Func, Args) of
+        {error, Reason} ->
+            {error, Reason, Func};
+        ok ->
+            pipe([], Tail);
+        Args ->
+            pipe(Args, Tail)
+    end;
+
+pipe(Args, Funcs) when is_tuple(Args) ->
+    pipe(tuple_to_list(Args), Funcs);
+
+pipe(Arg, Funcs) ->
+    pipe([Arg], Funcs).
+
+
+check_player(Pid, State, Move) ->
+    Current = State#state.current,
+    case lists:keyfind(Pid, 2, State#state.players) of
+        {Current, Pid} -> {State, Move};
+        _ -> {error, not_current_player} 
+    end.
+
+update_board(State, Move) ->
+    case ttt_board:place(State#state.board, Move) of
+        {error, Reason} -> {error, Reason};
+        NewBoard ->
+            State#state{board = NewBoard}
+    end.
+
+check_victory(State) ->
+    Current = State#state.current,
+    case ttt_board:victory(State#state.board) of
+        none ->
+            {player_turn, State#state{current = next_player(State)}};
+        Winner = {winner, Current} ->
+            {Winner, State}
+    end.
+
+next_player(State) ->
+    case State#state.current of
+        x -> o;
+        o -> x
+    end.
+
+current_player(State) ->
+    {_Piece, Player} = lists:keyfind(State#state.current, 1, State#state.players),
+    Player.
+
+other_player(State) ->
+    {_Piece, Player} = hd(lists:filter(
+        fun ({Piece, _Pid}) -> Piece =/= State#state.current end, 
+        State#state.players)),
+    Player.

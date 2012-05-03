@@ -10,8 +10,12 @@ new() ->
 
 place(Board, Piece, {X, Y}) when Piece==x; Piece==o ->
     Row = element(Y, Board),
-    NewRow = setelement(X, Row, Piece),
-    setelement(Y, Board, NewRow).
+    case element(X, Row) of
+        n -> 
+            NewRow = setelement(X, Row, Piece),
+            setelement(Y, Board, NewRow);
+        _ -> {error, invalid_move}
+    end.
 
 victory(Board) ->
     Rows = rows(Board),

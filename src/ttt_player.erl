@@ -7,8 +7,19 @@
 
 %% behavior common API
 -export([create/2,
-         recieve_challenge/2, issue_challenge/2,
+         recieve_challenge/2, 
+         issue_challenge/2,
+         accept_challenge/2,
+         decline_challenge/2,
          get_players/1]).
+
+% Public API
+-export([
+        won/2,
+        lost/2,
+        challenge/2,
+        turn/2
+    ]).
 
 
 -behavior(gen_server).
@@ -21,38 +32,61 @@
          terminate/2,
          code_change/3]).
 
+%%%===================================================================
+%%% API 
+%%%===================================================================
+create(Name, Callback) ->
+    {ok, Pid} = gen_server:start(?MODULE, [Name, Callback], []),
+    Pid.
+
+won(Player, Game) ->
+    gen_server:cast(Player, {won, Game}).
+
+lost(Player, Game) ->
+    gen_server:cast(Player, {lost, Game}).
+
+challenge(Player, Challenger) ->
+    gen_server:cast(Player, {challenge, Challenger}).
+
+turn(Player, Game) ->
+    gen_server:cast(Player, {turn, Game}).
 
 %%%===================================================================
 %%% Behavior Exports
 %%%===================================================================
 behaviour_info(callbacks) ->
     [{init, 0},
-     {challenge_recieved, 2},
-     {challenge_issued, 2},
-     {challenge_failed, 3},
-     {challenge_accepted, 3}];
+     {challenge_recieved, 2}, % (Player, Info)
+     {challenge_issued, 2}, % (Player, Info)
+     {challenge_failed, 3}, % (Player, Reason, Info)
+     {challenge_accepted, 3}, % (Player, Game, Info)
+     {game_started, 3}, % (Player, Game, Info)
+     {turn, 2}, % (Game, Info)
+     {invalid_turn, 3}, % (Game, Move, Info)
+     {won, 2}, % (Game, Info)
+     {lost, 2} % (Game, Info)
+    ]; 
 
 behaviour_info(_)->
     undefined.
 
-
 %%%===================================================================
-%%% API
+%%% Behavior API
 %%%===================================================================
-
-create(Name, Callback) ->
-    {ok, Pid} = gen_server:start(?MODULE, [Name, Callback], []),
-    Pid.
-
-recieve_challenge(Pid, Challenger) when is_pid(Pid); is_list(Challenger) ->
+recieve_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
     gen_server:cast(Pid, {challenge, Challenger}).
+
+accept_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
+    gen_server:cast(Pid, {accept_challenge, Challenger}).
+
+decline_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
+    gen_server:cast(Pid, {decline_challenge, Challenger}).
 
 issue_challenge(Pid, Name) when is_pid(Pid) ->
     gen_server:cast(Pid, {issue_challenge, Name}).
 
 get_players(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, players).
-
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -121,7 +155,21 @@ handle_cast({issue_challenge, Name}, Info) ->
         {error, Reason} ->
             Callback:challenge_failed(Name, Reason, Info)
     end,
-    {noreply, Next}.
+    {noreply, Next};
+
+handle_cast({accept_challenge, Name}, Info) ->
+    Challenges = Info#info.challenges_awaiting,
+    Callback = Info#info.callback,
+    Game = ttt_server:accept(Name),
+    NewInfo = Info#info{game = Game, challenges_awaiting = lists:delete(Name, Challenges)},
+    Next = Callback:game_started(Name, Game, NewInfo),
+    {noreply, Next}; 
+
+handle_cast({decline_challenge, Name}, Info) ->
+    Challenges = Info#info.challenges_awaiting,
+    ttt_server:decline(Name),
+    NewInfo = Info#info{challenges_awaiting = lists:delete(Name, Challenges)},
+    {noreply, NewInfo}.
 
 %%--------------------------------------------------------------------
 %% @private

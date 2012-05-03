@@ -108,7 +108,7 @@ handle_call({challenge, Name}, {Pid, _Ref}, State) ->
         case ttt_playerdb:get_by_name(State#state.players, Name) of
             undefined -> {error, not_found};
             #player{pid=Challee} ->
-                ttt_player:recieve_challenge(Challee, Player#player.name),
+                ttt_player:challenge(Challee, Player#player.name),
                 issued
         end
     end),
