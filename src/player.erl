@@ -3,18 +3,14 @@
 -include("ttt_player.hrl").
 -behavior(ttt_player).
 
--export([create/1, 
-         challenge/2, 
-         players/1,
-         accept/2,
-         decline/2
-        ]).
+-export([create/1]).
 
 -export([init/0, 
          challenge_recieved/2, 
          challenge_issued/2, 
          challenge_failed/3, 
          challenge_accepted/3,
+         challenge_declined/2,
          game_started/3,
          turn/2,
          invalid_turn/3,
@@ -25,19 +21,6 @@
 
 create(Name) ->
     ttt_player:create(Name, ?MODULE).
-
-challenge(Pid, Name) when is_pid(Pid) ->
-    ttt_player:issue_challenge(Pid, Name).
-
-accept(Pid, Name) ->
-    ttt_player:accept_challenge(Pid, Name).
-
-decline(Pid, Name) ->
-    ttt_player:decline_challenge(Pid, Name).
-
-players(Pid) when is_pid(Pid) ->
-    ttt_player:get_players(Pid).
-
 
 init() -> ok.
 
@@ -54,7 +37,11 @@ challenge_failed(Player, _Reason, Info) ->
     Info.
 
 challenge_accepted(Player, _Game, Info) ->
-    io:fwrite("~p challenge accepted to ~p~n", [Info#info.name, Player]),
+    io:fwrite("~p challenge accepted by ~p~n", [Info#info.name, Player]),
+    Info.
+
+challenge_declined(Player, Info) ->
+    io:fwrite("~p challenge delcined by to ~p~n", [Info#info.name, Player]),
     Info.
 
 game_started(Player, _Game, Info) ->

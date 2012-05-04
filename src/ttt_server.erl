@@ -44,10 +44,10 @@ challenge(Name) when is_list(Name) ->
     gen_server:call(?SERVER, {challenge, Name}).
 
 accept(Name) when is_list(Name) ->
-    ok.
+    gen_server:call(?SERVER, {accept, Name}).
 
 decline(Name) when is_list(Name) ->
-    ok.
+    gen_server:call(?SERVER, {decline, Name}).
 
 
 %%%===================================================================
@@ -110,6 +110,29 @@ handle_call({challenge, Name}, {Pid, _Ref}, State) ->
             #player{pid=Challee} ->
                 ttt_player:challenge(Challee, Player#player.name),
                 issued
+        end
+    end),
+    {reply, Reply, State};
+
+handle_call({accept, Name}, {Pid, _Ref}, State) ->
+    Reply = run_if_connected(State, Pid, fun(Player) ->
+        case ttt_playerdb:get_by_name(State#state.players, Name) of
+            undefined -> {error, not_found};
+            #player{pid=Challenger} ->
+                Game = ttt_game:start_link(Pid, Challenger),
+                ttt_player:challenge_accepted(Challenger, Player#player.name, Game),
+                Game
+        end
+    end),
+    {reply, Reply, State};
+
+handle_call({decline, Name}, {Pid, _Ref}, State) ->
+    Reply = run_if_connected(State, Pid, fun(Player) ->
+        case ttt_playerdb:get_by_name(State#state.players, Name) of
+            undefined -> {error, not_found};
+            #player{pid=Challenger} ->
+                ttt_player:challenge_declined(Challenger, Player#player.name),
+                ok
         end
     end),
     {reply, Reply, State}.

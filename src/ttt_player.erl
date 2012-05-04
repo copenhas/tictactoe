@@ -7,7 +7,6 @@
 
 %% behavior common API
 -export([create/2,
-         recieve_challenge/2, 
          issue_challenge/2,
          accept_challenge/2,
          decline_challenge/2,
@@ -18,6 +17,8 @@
         won/2,
         lost/2,
         challenge/2,
+        challenge_declined/2,
+        challenge_accepted/3,
         turn/2
     ]).
 
@@ -35,10 +36,6 @@
 %%%===================================================================
 %%% API 
 %%%===================================================================
-create(Name, Callback) ->
-    {ok, Pid} = gen_server:start(?MODULE, [Name, Callback], []),
-    Pid.
-
 won(Player, Game) ->
     gen_server:cast(Player, {won, Game}).
 
@@ -46,10 +43,35 @@ lost(Player, Game) ->
     gen_server:cast(Player, {lost, Game}).
 
 challenge(Player, Challenger) ->
-    gen_server:cast(Player, {challenge, Challenger}).
+    gen_server:cast(Player, {challenge_recieved, Challenger}).
+
+challenge_declined(Player, Name) ->
+    gen_server:cast(Player, {challenge_declined, Name}).
+
+challenge_accepted(Player, Name, Game) ->
+    gen_server:cast(Player, {challenge_accepted, Name, Game}).
 
 turn(Player, Game) ->
     gen_server:cast(Player, {turn, Game}).
+
+%%%===================================================================
+%%% Behavior API
+%%%===================================================================
+create(Name, Callback) ->
+    {ok, Pid} = gen_server:start(?MODULE, [Name, Callback], []),
+    Pid.
+
+accept_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
+    gen_server:cast(Pid, {accept_challenge, Challenger}).
+
+decline_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
+    gen_server:cast(Pid, {decline_challenge, Challenger}).
+
+issue_challenge(Pid, Name) when is_pid(Pid), is_list(Name) ->
+    gen_server:cast(Pid, {issue_challenge, Name}).
+
+get_players(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, players).
 
 %%%===================================================================
 %%% Behavior Exports
@@ -60,6 +82,7 @@ behaviour_info(callbacks) ->
      {challenge_issued, 2}, % (Player, Info)
      {challenge_failed, 3}, % (Player, Reason, Info)
      {challenge_accepted, 3}, % (Player, Game, Info)
+     {challenge_declined, 2}, % (Player, Info)
      {game_started, 3}, % (Player, Game, Info)
      {turn, 2}, % (Game, Info)
      {invalid_turn, 3}, % (Game, Move, Info)
@@ -70,23 +93,6 @@ behaviour_info(callbacks) ->
 behaviour_info(_)->
     undefined.
 
-%%%===================================================================
-%%% Behavior API
-%%%===================================================================
-recieve_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
-    gen_server:cast(Pid, {challenge, Challenger}).
-
-accept_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
-    gen_server:cast(Pid, {accept_challenge, Challenger}).
-
-decline_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
-    gen_server:cast(Pid, {decline_challenge, Challenger}).
-
-issue_challenge(Pid, Name) when is_pid(Pid) ->
-    gen_server:cast(Pid, {issue_challenge, Name}).
-
-get_players(Pid) when is_pid(Pid) ->
-    gen_server:call(Pid, players).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -138,13 +144,6 @@ handle_call(players, _From, Info) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({challenge, Player}, Info) ->
-    Challenges = Info#info.challenges_awaiting,
-    Callback = Info#info.callback,
-    NewInfo = Info#info{challenges_awaiting = [Player | Challenges]},
-    Next = Callback:challenge_recieved(Player, NewInfo),
-    {noreply, Next};
-    
 handle_cast({issue_challenge, Name}, Info) ->
     Challenges = Info#info.challenges_pending,
     Callback = Info#info.callback,
@@ -155,6 +154,28 @@ handle_cast({issue_challenge, Name}, Info) ->
         {error, Reason} ->
             Callback:challenge_failed(Name, Reason, Info)
     end,
+    {noreply, Next};
+
+handle_cast({challenge_declined, Player}, Info) ->
+    Challenges = Info#info.challenges_pending,
+    Callback = Info#info.callback,
+    NewInfo = Info#info{challenges_pending = lists:delete(Player, Challenges)},
+    Next = Callback:challenge_declined(Player, NewInfo),
+    {noreply, Next};
+
+handle_cast({challenge_accepted, Player, Game}, Info) ->
+    Challenges = Info#info.challenges_pending,
+    Callback = Info#info.callback,
+    NewInfo = Info#info{challenges_pending = lists:delete(Player, Challenges),
+                        game = Game},
+    Next = Callback:challenge_accepted(Player, Game, NewInfo),
+    {noreply, Next};
+
+handle_cast({challenge_recieved, Player}, Info) ->
+    Challenges = Info#info.challenges_awaiting,
+    Callback = Info#info.callback,
+    NewInfo = Info#info{challenges_awaiting = [Player | Challenges]},
+    Next = Callback:challenge_recieved(Player, NewInfo),
     {noreply, Next};
 
 handle_cast({accept_challenge, Name}, Info) ->
