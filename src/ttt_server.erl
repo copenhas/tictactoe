@@ -119,8 +119,10 @@ handle_call({accept, Name}, {Pid, _Ref}, State) ->
         case ttt_playerdb:get_by_name(State#state.players, Name) of
             undefined -> {error, not_found};
             #player{pid=Challenger} ->
-                Game = ttt_game:start_link(Pid, Challenger),
+                % TODO: game supervisor? or a start/2 + monitoring?
+                {ok, Game} = ttt_game:start_link(Pid, Challenger),
                 ttt_player:challenge_accepted(Challenger, Player#player.name, Game),
+                ttt_game:start(Game),
                 Game
         end
     end),

@@ -14,8 +14,8 @@
          game_started/3,
          turn/2,
          invalid_turn/3,
-         won/2,
-         lost/2
+         turn_success/3,
+         game_over/3
         ]).
 
 
@@ -24,6 +24,7 @@ create(Name) ->
 
 init() -> ok.
 
+% TODO: ok this is getting out of hand. what about a single handle_event or only a few functions
 challenge_recieved(_Player, Info) ->
     io:fwrite("~p recieved challenge~n", [Info#info.name]),
     Info.
@@ -56,10 +57,10 @@ invalid_turn(_Game, Move, Info) ->
     io:fwrite("~p turn was invalid, ~p~n", [Info#info.name, Move]),
     Info.
 
-won(_Game, Info) ->
-    io:fwrite("~p won~n", [Info#info.name]),
+turn_success(_Game, Board, Info) ->
+    io:fwrite("~p turn was made, ~p~n", [Info#info.name, Board]),
     Info.
 
-lost(_Game, Info) ->
-    io:fwrite("~p lost~n", [Info#info.name]),
+game_over(_Game, Condition, Info) ->
+    io:fwrite("~p ~p the game", [Info#info.name, Condition]),
     Info.

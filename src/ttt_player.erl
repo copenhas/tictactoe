@@ -10,12 +10,12 @@
          issue_challenge/2,
          accept_challenge/2,
          decline_challenge/2,
-         get_players/1]).
+         get_players/1,
+         move/3]).
 
 % Public API
 -export([
-        won/2,
-        lost/2,
+        game_over/3,
         challenge/2,
         challenge_declined/2,
         challenge_accepted/3,
@@ -36,11 +36,8 @@
 %%%===================================================================
 %%% API 
 %%%===================================================================
-won(Player, Game) ->
-    gen_server:cast(Player, {won, Game}).
-
-lost(Player, Game) ->
-    gen_server:cast(Player, {lost, Game}).
+game_over(Player, Game, Condition) when is_pid(Player), is_pid(Game) ->
+    gen_server:cast(Player, {game_over, Game, Condition}).
 
 challenge(Player, Challenger) ->
     gen_server:cast(Player, {challenge_recieved, Challenger}).
@@ -73,6 +70,9 @@ issue_challenge(Pid, Name) when is_pid(Pid), is_list(Name) ->
 get_players(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, players).
 
+move(Pid, Game, Coords = {X, Y}) when is_pid(Pid), is_pid(Game), is_integer(X), is_integer(Y) ->
+    gen_server:cast(Pid, {place, Game, Coords}).
+
 %%%===================================================================
 %%% Behavior Exports
 %%%===================================================================
@@ -86,8 +86,8 @@ behaviour_info(callbacks) ->
      {game_started, 3}, % (Player, Game, Info)
      {turn, 2}, % (Game, Info)
      {invalid_turn, 3}, % (Game, Move, Info)
-     {won, 2}, % (Game, Info)
-     {lost, 2} % (Game, Info)
+     {turn_success, 3}, % (Game, Board, Info)
+     {game_over, 3} % (Game, win|lose, Info)
     ]; 
 
 behaviour_info(_)->
@@ -190,6 +190,29 @@ handle_cast({decline_challenge, Name}, Info) ->
     Challenges = Info#info.challenges_awaiting,
     ttt_server:decline(Name),
     NewInfo = Info#info{challenges_awaiting = lists:delete(Name, Challenges)},
+    {noreply, NewInfo};
+
+handle_cast({turn, Game}, Info) ->
+    Callback = Info#info.callback,
+    NewInfo = Callback:turn(Game, Info),
+    {noreply, NewInfo};
+
+handle_cast({place, Game, Coords}, Info) ->
+   Callback = Info#info.callback,
+   NewInfo = case ttt_game:move(Game, Coords) of
+        {ok, Board} ->
+            Callback:turn_success(Game, Board, Info);
+        {error, invalid_turn} ->
+            Callback:invalid_turn(Game, Coords, Info);
+        {winner, _Player} ->
+            Callback:game_over(Game, win, Info)
+   end,
+   {noreply, NewInfo};
+
+handle_cast({game_over, Game, Condition}, Info) ->
+    Callback = Info#info.callback,
+    Updated = Info#info{game=none},
+    NewInfo = Callback:game_over(Game, Condition, Updated),
     {noreply, NewInfo}.
 
 %%--------------------------------------------------------------------

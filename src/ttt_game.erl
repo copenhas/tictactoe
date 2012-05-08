@@ -4,10 +4,11 @@
 
 %% API
 -export([start_link/2]).
--export([get_board/1, move/2]).
+-export([start/1, get_board/1, move/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
+         created/2,
          player_turn/3,
          handle_event/3,
          handle_sync_event/4,
@@ -26,6 +27,9 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+start(Game) when is_pid(Game) ->
+    gen_fsm:send_event(Game, start).
 
 get_board(Game) when is_pid(Game) ->
     gen_fsm:sync_send_all_state_event(Game, get_board).
@@ -63,7 +67,7 @@ start_link(Player1, Player2) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Player1, Player2]) ->
-    {ok, x_player_turn, #state{
+    {ok, created, #state{
             players=[{x, Player1}, {o, Player2}],
             board=ttt_board:new()
         }}.
@@ -83,6 +87,9 @@ init([Player1, Player2]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
+created(start, State) ->
+    ttt_player:turn(current_player(State), self()),
+    {next_state, player_turn, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -111,8 +118,7 @@ player_turn({place, Coords}, {Pid, _Ref}, State) ->
             ttt_player:turn(CurrentPlayer, self()),
             {reply, {ok, UpdatedState#state.board}, player_turn, UpdatedState};
         {Winner, UpdatedState} ->
-            ttt_player:won(current_player(UpdatedState), self()),
-            ttt_player:lost(other_player(UpdatedState), self()),
+            ttt_player:game_over(other_player(UpdatedState), self(), lose),
             {stop, Winner, {ok, UpdatedState#state.board}, UpdatedState}
     end.
 
