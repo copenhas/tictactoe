@@ -11,6 +11,7 @@
          accept_challenge/2,
          decline_challenge/2,
          get_players/1,
+         get_game/1,
          move/3]).
 
 % Public API
@@ -67,11 +68,14 @@ decline_challenge(Pid, Challenger) when is_pid(Pid), is_list(Challenger) ->
 issue_challenge(Pid, Name) when is_pid(Pid), is_list(Name) ->
     gen_server:cast(Pid, {issue_challenge, Name}).
 
+move(Pid, Game, Coords = {X, Y}) when is_pid(Pid), is_pid(Game), is_integer(X), is_integer(Y) ->
+    gen_server:cast(Pid, {place, Game, Coords}).
+
 get_players(Pid) when is_pid(Pid) ->
     gen_server:call(Pid, players).
 
-move(Pid, Game, Coords = {X, Y}) when is_pid(Pid), is_pid(Game), is_integer(X), is_integer(Y) ->
-    gen_server:cast(Pid, {place, Game, Coords}).
+get_game(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, get_game).
 
 %%%===================================================================
 %%% Behavior Exports
@@ -132,7 +136,10 @@ init([Name, Callback]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call(players, _From, Info) ->
-    {reply, ttt_server:players(), Info}.
+    {reply, ttt_server:players(), Info};
+
+handle_call(get_game, _From, Info) ->
+    {reply, Info#info.game, Info}.
 
 %%--------------------------------------------------------------------
 %% @private

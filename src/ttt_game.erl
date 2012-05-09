@@ -110,7 +110,12 @@ created(start, State) ->
 %% @end
 %%--------------------------------------------------------------------
 player_turn({place, Coords}, {Pid, _Ref}, State) ->
-    case pipe([Pid, State, Coords], [check_player, update_board, check_victory]) of
+    Funcs = [
+        fun check_player/1,
+        fun update_board/1, 
+        fun check_victory/1
+    ],
+    case pipe({Pid, State, Coords}, Funcs) of
         {error, Reason, _Func} -> 
             {reply, {error, Reason}, player_turn, State};
         {player_turn, UpdatedState} ->
@@ -206,32 +211,25 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 pipe(Args, []) -> Args;
 
-pipe(Args, [Func, Tail]) when is_list(Args) ->
-    case apply(Func, Args) of
+pipe(Args, [Func|Tail]) ->
+    case apply(Func, [Args]) of
         {error, Reason} ->
             {error, Reason, Func};
         ok ->
             pipe([], Tail);
-        Args ->
-            pipe(Args, Tail)
-    end;
+        Next ->
+            pipe(Next, Tail)
+    end.
 
-pipe(Args, Funcs) when is_tuple(Args) ->
-    pipe(tuple_to_list(Args), Funcs);
-
-pipe(Arg, Funcs) ->
-    pipe([Arg], Funcs).
-
-
-check_player(Pid, State, Move) ->
+check_player({Pid, State, Move}) ->
     Current = State#state.current,
     case lists:keyfind(Pid, 2, State#state.players) of
-        {Current, Pid} -> {State, Move};
+        {Current, Pid} -> {State, Current, Move};
         _ -> {error, not_current_player} 
     end.
 
-update_board(State, Move) ->
-    case ttt_board:place(State#state.board, Move) of
+update_board({State, Piece, Move}) ->
+    case ttt_board:place(State#state.board, Piece, Move) of
         {error, Reason} -> {error, Reason};
         NewBoard ->
             State#state{board = NewBoard}

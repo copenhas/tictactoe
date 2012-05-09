@@ -39,7 +39,7 @@ get_by_name(Db, Name) when is_list(Name) ->
 
 
 get_by_ref(Db, Mon) when is_reference(Mon) ->
-    case ets:lookup(Db#playerdb.ref2name) of
+    case ets:lookup(Db#playerdb.ref2name, Mon) of
         [] -> undefined;
         [{Mon, Name}] -> get_by_name(Db, Name)
     end.
